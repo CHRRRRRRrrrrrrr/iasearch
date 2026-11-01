@@ -1,0 +1,7 @@
+[project]
+name = "fastapi-backend"
+version = "0.1.0"
+description = "API de recherche : knn sur les clusters, recherche hybride, rerank par LLM"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["debugpy>=1.8", "elasticsearch>=9.0.0,<10", "fastapi>=0.115", "httpx>=0.28", "uvicorn>=0.32"]

@@ -1,0 +1,103 @@
+services:
+  elasticsearch:
+    image: elasticsearch:9.3.2
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - http.cors.enabled=true
+      - http.cors.allow-origin="*"
+      - http.cors.allow-headers=X-Requested-With,Content-Type,Content-Length,Authorization
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=1h
+      - OLLAMA_NUM_PARALLEL=4
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    # accès GPU : voir docker-compose.gpu.yml (nécessite une carte NVIDIA)
+
+  # télécharge les modèles dans le docker Ollama (équivalent de "ollama pull"), puis s'arrête
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: ollama-init
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    # 5 tentatives par modèle en cas de coupure réseau
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for model in qwen3-embedding:0.6b qwen3.5:0.8b; do
+          for attempt in 1 2 3 4 5; do
+            ollama pull $$model && break
+            [ $$attempt = 5 ] && exit 1
+            sleep 5
+          done
+        done
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # script python d'indexation : s'exécute une fois puis s'arrête (ne réindexe pas si les index existent)
+  indexer:
+    build: ./index_data
+    container_name: indexer
+    environment:
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - OLLAMA_HOST=http://ollama:11434
+      - N_CLUSTERS=20
+      - FORCE_REINDEX=${FORCE_REINDEX:-false}
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  backend:
+    build: ./fastapi-backend
+    container_name: fastapi-backend
+    environment:
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - OLLAMA_HOST=http://ollama:11434
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  front:
+    build: ./react-front
+    container_name: react-front
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  esdata:
+  ollama:
